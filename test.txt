@@ -1,0 +1,150 @@
+## Configuring the Environment for Mobile Devices
+
+This  section   will  guide  you   to  prepare  the   environment  for
+cross-compiling your code to a  mobile device architecture. It assumes
+you already have the AClang environment configured.
+
+Clang/LLVM  is natively  a  cross-compiler, meaning  that  one set  of
+programs  can   compile  to  all   targets  by  setting   the  -target
+option. That makes  it a lot easier for programers  wishing to compile
+to different platforms and  architectures, and for compiler developers
+that only have to maintain one build system, and for OS distributions,
+that need only one set of main packages.
+
+But, as is true to any cross-compiler, and given the complexity of
+different architectures, OSs and options, every target has its own set
+of binaries, headers, libraries, etc. its not always easy finding the
+headers, libraries or binutils to generate target specific code.
+
+Clang/LLVM come with standard libraries only (like compiler-rt,
+libcxx, libgcc, libm, etc), so you’ll have to find and make available
+to the build system, every other library required to build your
+software, that is specific to your target. It’s not enough to have
+your host’s libraries installed.
+
+For android platform, we have the Native Development Kit (NDK). NDK is
+a set of tools that allow you to leverage C and C++ code in your
+Android apps. You can use it either to build from your own source
+code, or to take advantage of existing prebuilt libraries.
+
+You can use the toolchains provided with the Android NDK to
+configuring your cross-platform environment. This flexibility is
+useful when you already have your own build system, and only need the
+ability to invoke the cross-compiler in order to add support to
+Android for it. Detailed information can be obtained
+[here](https://developer.android.com/ndk/guides/standalone_toolchain.html), 
+and the NDK package can be downloaded
+[here](https://developer.android.com/ndk/downloads/index.html).
+
+Note that we have been used the release 10e (may/2015) of the android-ndk
+package. There may be differences in scripts and configuration for the
+newer ndk packages. We plan to upgrade our version as soon as
+possible. For now, we recommend that you only using the version
+10e. This can be obtained from this
+[link](https://developer.android.com/ndk/downloads/older_releases.html). 
+
+To prepare the environment, the first step is download and extract the
+"android-ndk 10e" for your platform. We will assume that the $NDK is
+the installation root for the NDK. The next thing you need to do is
+define your sysroot. A sysroot is a directory containing the system
+headers and libraries for your target. To define the sysroot, you must
+know the Android API level you want to target for native support. For
+our mobile device we defined:
+
+$ SYSROOT=$NDK/platforms/android-21/arch-arm64
+
+The NDK provides the make-standalone-toolchain.sh shell script to
+allow you to perform a customized toolchain installation. For our
+target platform we used the command line:
+
+$NDK/build/tools/make-standalone-toolchain.sh \
+--toolchain=aarch64-linux-android-clang3.5 --platform=android-21 \
+--install-dir=$HOME/android-toolchain
+
+The next step is to overriding the prebuilt Clang/LLVM apps with our
+AClang. You can follow the command lines below.
+
+$ cd $HOME/android-toolchain/sysroot/usr/include
+$ cp -r $HOST_LLVM/install/include/vectorize .
+$ mkdir llvm
+$ cp -r $HOST_LLVM/install/include/llvm/SpirTools . > cd ../../../bin
+$ cp $HOST_LLVM/install/bin/pet .
+$ cp $HOST_LLVM/install/bin/ppcg .
+$ cp $HOST_LLVM/install/bin/spir-encoder .
+$ cp $HOST_LLVM/install/bin/clang-3.5 .
+$ cp $HOST_LLVM/install/bin/clang-pcg .
+
+Note that the name of compiler is different on both places. First, You
+can remove the old one:
+
+$ rm clang35
+
+Now,  we need  to change  the name  of the  compiler and  also include
+--sysroot=$SYSROOT in  the clang  command lines. To  do that,  you can
+edit   the   scripts   files    clang   and   clang++   localized   in
+$HOME/android-toolchain/bin and  make the  changes in all  places that
+appears the name clang35.  Follow the example below:
+
+
+‘dirname $0‘/clang35 -target aarch64-none-linux-android "$@"
+
+must be changed to:
+
+‘dirname $0‘/clang-3.5 -target aarch64-none-linux-android --sysroot=$SYSROOT
+"$@"
+
+After, we need to configure your shell’s environment variables to be
+able to use the cross-compiler.
+
+$ export HOST_LLVM=$HOME/llvm-omp
+$ export PATH=$HOME/android-toolchain/bin:$PATH
+$ export SYSROOT=$HOME/android-toolchain/sysroot
+$ export C_INCLUDE_PATH=$HOME/android-toolchain/lib/clang/3.5/include
+$ export CPLUS_INCLUDE_PATH=$HOME/android-toolchain/lib/clang/3.5/include
+$ export LLVM_INCLUDE_PATH=$SYSROOT/usr/include
+
+If the same machine is being used to compile for both platforms (Intel
+&  Android), it  is  recommended  to configure  the  .bashrc file  (or
+.bash_profile) with both environment and a switching mechanism between
+them.  In  our  lab  for   instance,  we  defined  two  alias,  namely
+”intel-ver”    and    ”android-ver”    to   comute    between    these
+environments.  The following  command line  check if  configuration is
+fine:
+
+$ clang --version
+aclang version 3.5 (based on clang 3.5.0)
+Target:  aarch64-none-linux-android
+...
+
+You also need the OpenCL SDK for target device. In our test machine,
+an ARM equipped with Mali GPU, the SDK can de download
+[here](http://malideveloper.arm.com/resources/sdks/mali-opencl-sdk). 
+For our Linux machine this file is
+Mali_OpenCL_SDK_v1.1.0.0a36a7_Linux.tgz. After expanded this file, we
+generate the libOpencl.so following the instructions on the site and
+copy the necessary files to our environment:
+
+$ cp libOpenCL.so $HOME/android-toolchain/lib/gcc/aarch64-linux-android/4.9/.
+$ cd ../include
+$ cp -r CL $SYSROOT/usr/include/.
+
+After that, we also need to copy the omp.h file to sysroot:
+
+$ cd $SYSROOT/usr/include
+$ cp ../../../lib/gcc/aarch64-linux-android/4.9/include/omp.h .
+
+Finally, we need to compile the aclang runtime library to the target device
+and install it in the appropriate place. Note that the place is
+determined by the linker used to link the objects to produce the
+binary. In this case, the gnu linker.
+
+$ cd $HOST_LLVM/tools/clang/lib/MPtoGPU
+$ clang -O3 -c -Wall -Iinclude -o cldevice.o cldevice.c
+$ llvm-ar rcs libmptogpu.a cldevice.o
+$ mv libmptogpu.a \
+  $HOME/android-toolchain/lib/gcc/aarch64-linux-android/4.9/.
+
+
+Now,  to execute  an application  on mobile  device, you  can use  the
+[Android Debug Bridge](http://developer.android.com/intl/pt-br/tools/help/adb.html).Android Debug Bridge (adb) is a  versatile command line tool that lets
+you communicate with an Android-powered devices.
